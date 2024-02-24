@@ -16,7 +16,7 @@ async function parse(page: Page, url: string) {
     const html = await page.content();
 
     if (html.includes("Доступ закрыт")) {
-        throw new Error("Forbidden")
+        throw new Error("Forbidden");
     }
     return html;
 }
@@ -37,7 +37,7 @@ async function run() {
 
         console.log(`Download ${articleId}`);
         try {
-           const html = await parse(page, url);
+            const html = await parse(page, url);
 
             // Записать HTML-код в файл
             await fs.writeFile(`${OUTPUT_DIR}/${filename}`, html, { flag: "wx" });
