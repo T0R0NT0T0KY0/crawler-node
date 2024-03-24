@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { PorterStemmerRu } from "natural";
+import { PorterStemmerRu, WordTokenizer } from "natural";
 import path, { join } from "path";
 import { readdir, readFile, writeFile } from "fs/promises";
 
@@ -14,45 +14,52 @@ const tokenFileUsageWithLemma = new Map<string, number>()
 let documentCount: number = 0; // To store the total number of documents
 
 function tokensFileUsage(documentText: string) {
-    const words = [...new Set(documentText.split(/\W+/).map((token) => token.toLowerCase()))];
+    const tokenizer = new WordTokenizer();
+    const currentTokens = tokenizer.tokenize(documentText).map((token) => token.toLowerCase());
+
+    const words = [...new Set(currentTokens)];
 
     words.map((token) => tokenFileUsage.set(token, tokenFileUsage.get(token) + 1))
 
-    const wordsSetWithLemma = [...new Set(documentText.split(/\W+/).map((token) => PorterStemmerRu.stem(token.toLowerCase())))];
+    const wordsWithLemma = [...new Set(words.map((token) => PorterStemmerRu.stem(token)))];
 
-    wordsSetWithLemma.map((token) => tokenFileUsageWithLemma.set(token, tokenFileUsage.get(token) + 1))
+    wordsWithLemma.map((token) => tokenFileUsageWithLemma.set(token, tokenFileUsageWithLemma.get(token) + 1))
 }
 
-function countTf(documentText: string) {
+function calculateTf(documentText: string) {
     const termFrequencies = new Map<string, number>(tokens.map(token => [token, 0]));
-    const words = documentText.split(/\W+/);
+
+    const tokenizer = new WordTokenizer();
+    const currentTokens = tokenizer.tokenize(documentText);
 
     // Podschet chastoty kazhdogo slova (Frequency counting)
-    for (const word of words) {
-        const key = word.toLowerCase();
+    for (const token of currentTokens) {
+        const key = token.toLowerCase();
         if (!termFrequencies.has(key)) continue;
         termFrequencies.set(key, termFrequencies.get(key) + 1);
     }
 
-    for (const term of tokens) {
-        termFrequencies.set(term, termFrequencies.get(term) / words.length);
+    for (const [key, value] of [...termFrequencies.entries()]) {
+        termFrequencies.set(key, value / currentTokens.length);
     }
 
     return termFrequencies;
 }
 
-function countTfWithLemma(documentText: string) {
+function calculateTfWithLemma(documentText: string) {
     const termFrequencies = new Map<string, number>(tokens.map(token => [PorterStemmerRu.stem(token), 0]));
-    const words = documentText.split(/\W+/);
 
-    for (const word of words) {
-        const key = PorterStemmerRu.stem(word.toLowerCase());
+    const tokenizer = new WordTokenizer();
+    const currentTokens = tokenizer.tokenize(documentText);
+
+    for (const token of currentTokens) {
+        const key = PorterStemmerRu.stem(token.toLowerCase());
         if (!termFrequencies.has(key)) continue;
         termFrequencies.set(key, termFrequencies.get(key) + 1);
     }
 
     for (const term of tokens) {
-        termFrequencies.set(term, termFrequencies.get(term) / words.length);
+        termFrequencies.set(term, termFrequencies.get(term) / currentTokens.length);
     }
 
     return termFrequencies;
@@ -65,7 +72,7 @@ function calculateIdf() {
         const documentCountWithTerm = tokenFileUsage.get(term);
 
 
-        const idfValue = Math.log(documentCount / (documentCountWithTerm + 1));
+        const idfValue = Math.log(documentCount / documentCountWithTerm);
         idf.set(term, idfValue);
     }
 
@@ -74,12 +81,11 @@ function calculateIdf() {
 
 function calculateIdfWithLemma() {
     const idf: Map<string, number> = new Map();
-
-    for (const term of tokens) {
+    const tokensWithLemma = [...new Set(tokens.map(token => PorterStemmerRu.stem(token)))];
+    for (const term of tokensWithLemma) {
         const documentCountWithTerm = tokenFileUsageWithLemma.get(term);
 
-
-        const idfValue = Math.log(documentCount / (documentCountWithTerm + 1));
+        const idfValue = Math.log(documentCount / documentCountWithTerm);
         idf.set(term, idfValue);
     }
 
@@ -90,37 +96,34 @@ async function calculateTfIdf() {
     const parsedTokens = (await readFile(TOKENS_FILE, 'utf-8')).split('\n');
     tokens.push(...parsedTokens);
     parsedTokens.map(token => (tokenFileUsage.set(token, 0), tokenFileUsageWithLemma.set(PorterStemmerRu.stem(token), 0)));
-    let tfl: Map<string,number>;
-    let idfl: Map<string,number>;
     const fileNames = await readdir(FILES_DIR);
     documentCount = fileNames.length; // Update document count
     for (const fileName of fileNames) {
         const htmlFile = await readFile(path.join(FILES_DIR, fileName), 'utf-8');
         const cheerioApi = cheerio.load(htmlFile);
         const text = cheerioApi("body").text();
-        tfl = countTfWithLemma(text);
-        idfl = calculateIdfWithLemma();
 
         tokensFileUsage(text)
     }
+
+    const idf = calculateIdf();
+    const idfl = calculateIdfWithLemma();
 
     for (const fileName of fileNames) {
         const htmlFile = await readFile(path.join(FILES_DIR, fileName), 'utf-8');
         const cheerioApi = cheerio.load(htmlFile);
         const text = cheerioApi("body").text();
-        const tf = countTf(text);
+        const tf = calculateTf(text);
+        const tfl = calculateTfWithLemma(text);
 
-        const idf = calculateIdf();
 
-        const res = tokens.map(token => {
-            const idfValue = idf.get(token);
+        const res = [...idf].map(([token, idfValue]) => {
             const tfValue = tf.get(token);
-            return `${token} ${idfValue} ${tfValue} ${tfValue - idfValue}`;
+            return `${token} ${idfValue} ${tfValue - idfValue}`;
         })
-        const resWithLemma = tokens.map(token => {
-            const idfValue = idfl.get(token);
+        const resWithLemma = [...idfl].map(([token, idfValue]) => {
             const tfValue = tfl.get(token);
-            return `${token} ${idfValue} ${tfValue} ${tfValue - idfValue}`;
+            return `${token} ${idfValue} ${tfValue - idfValue}`;
         })
 
         await writeFile(join(OUTPUT_DIT, fileName.replace(".html", ".txt")), res.join("\n"), { flag: "w" });
